@@ -7,9 +7,13 @@ from vectordb import VectorDB
 from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Load environment variables
 load_dotenv()
+
+DATA_DIR = "../data"
 
 
 def load_documents() -> List[str]:
@@ -20,13 +24,17 @@ def load_documents() -> List[str]:
         List of sample documents
     """
     results = []
-    # TODO: Implement document loading
-    # HINT: Read the documents from the data directory
-    # HINT: Return a list of documents
-    # HINT: Your implementation depends on the type of documents you are using (.txt, .pdf, etc.)
+    data_path = os.path.join(os.path.dirname(__file__), DATA_DIR)
+    documents = []
+    for filename in os.listdir(data_path):
+        if filename.endswith(".pdf"):
+            file_path = os.path.join(data_path, filename)
+            loader = PyPDFLoader(file_path)
+            documents.extend(loader.load())
 
-    # Your implementation here
-    return results
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    split_documents = text_splitter.split_documents(documents)
+    return split_documents
 
 
 class RAGAssistant:
@@ -53,7 +61,12 @@ class RAGAssistant:
         # HINT: Use ChatPromptTemplate.from_template() with a template string
         # HINT: Your template should include placeholders for {context} and {question}
         # HINT: Design your prompt to effectively use retrieved context to answer questions
-        self.prompt_template = None  # Your implementation here
+        self.prompt_template = ChatPromptTemplate.from_template(
+            """Answer the question based only on the following context:
+{context}
+
+Question: {question}"""
+        )
 
         # Create the chain
         self.chain = self.prompt_template | self.llm | StrOutputParser()
@@ -114,14 +127,9 @@ class RAGAssistant:
         Returns:
             Dictionary containing the answer and retrieved context
         """
-        llm_answer = ""
-        # TODO: Implement the RAG query pipeline
-        # HINT: Use self.vector_db.search() to retrieve relevant context chunks
-        # HINT: Combine the retrieved document chunks into a single context string
-        # HINT: Use self.chain.invoke() with context and question to generate the response
-        # HINT: Return a string answer from the LLM
-
-        # Your implementation here
+        context_chunks = self.vector_db.search(input, n_results=n_results)
+        context = "\n\n".join([doc.page_content for doc in context_chunks])
+        llm_answer = self.chain.invoke({"context": context, "question": input})
         return llm_answer
 
 
@@ -139,15 +147,11 @@ def main():
 
         assistant.add_documents(sample_docs)
 
-        done = False
-
-        while not done:
-            question = input("Enter a question or 'quit' to exit: ")
-            if question.lower() == "quit":
-                done = True
-            else:
-                result = assistant.query(question)
-                print(result)
+        question = "What is an AI agent?"
+        result = assistant.invoke(question)
+        print(f"Question: {question}")
+        print(f"Answer: {result}")
+        done = True
 
     except Exception as e:
         print(f"Error running RAG assistant: {e}")
