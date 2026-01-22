@@ -1,8 +1,12 @@
 import os
 import chromadb
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from langchain_core.documents import Document
 from sentence_transformers import SentenceTransformer
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from utils import setup_logger
+
+logger = setup_logger()
 
 
 class VectorDB:
@@ -38,55 +42,26 @@ class VectorDB:
             metadata={"description": "RAG document collection"},
         )
 
-        print(f"Vector database initialized with collection: {self.collection_name}")
+        # Initialize text splitter
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            length_function=len,
+        )
 
-    def chunk_text(self, text: str, chunk_size: int = 500) -> List[str]:
+        logger.info(f"Vector database initialized with collection: {self.collection_name}")
+
+    def chunk_text(self, text: str) -> List[str]:
         """
-        Simple text chunking by splitting on spaces and grouping into chunks.
-
+        Split text into smaller chunks for better retrieval using RecursiveCharacterTextSplitter.
+      
         Args:
             text: Input text to chunk
-            chunk_size: Approximate number of characters per chunk
-
+      
         Returns:
             List of text chunks
         """
-        # TODO: Implement text chunking logic
-        # You have several options for chunking text - choose one or experiment with multiple:
-        #
-        # OPTION 1: Simple word-based splitting
-        #   - Split text by spaces and group words into chunks of ~chunk_size characters
-        #   - Keep track of current chunk length and start new chunks when needed
-        #
-        # OPTION 2: Use LangChain's RecursiveCharacterTextSplitter
-        #   - from langchain_text_splitters import RecursiveCharacterTextSplitter
-        #   - Automatically handles sentence boundaries and preserves context better
-        #
-        # OPTION 3: Semantic splitting (advanced)
-        #   - Split by sentences using nltk or spacy
-        #   - Group semantically related sentences together
-        #   - Consider paragraph boundaries and document structure
-        #
-        # Feel free to try different approaches and see what works best!
-
-        words = text.split()
-        chunks = []
-        current_chunk = []
-        current_chunk_len = 0
-
-        for word in words:
-            if current_chunk_len + len(word) + 1 > chunk_size and current_chunk:
-                chunks.append(" ".join(current_chunk))
-                current_chunk = [word]
-                current_chunk_len = len(word)
-            else:
-                current_chunk.append(word)
-                current_chunk_len += len(word) + 1  # +1 for space
-
-        if current_chunk:
-            chunks.append(" ".join(current_chunk))
-
-        return chunks
+        return self.text_splitter.split_text(text)
 
     def add_documents(self, documents: List[Document]) -> None:
         """
@@ -104,14 +79,14 @@ class VectorDB:
         # HINT: Store the embeddings, documents, metadata, and IDs in your vector database
         # HINT: Print progress messages to inform the user
 
-        print(f"Processing {len(documents)} documents...")
+        logger.info(f"Processing {len(documents)} documents...")
 
         for doc_idx, doc in enumerate(documents):
             content = doc.page_content
             metadata = doc.metadata
 
             if not content:
-                print(f"Skipping document {doc_idx} due to empty content.")
+                logger.warning(f"Skipping document {doc_idx} due to empty content.")
                 continue
 
             chunks = self.chunk_text(content)
@@ -127,16 +102,15 @@ class VectorDB:
                 chunk_contents.append(chunk)
 
             if chunk_contents:
-                embeddings = self.embedding_model.encode(chunk_contents).tolist()
                 self.collection.add(
-                    embeddings=embeddings,
+                    embeddings=self.embedding_model.encode(chunk_contents).tolist(),
                     documents=chunk_contents,
                     metadatas=chunk_metadatas,
                     ids=chunk_ids
                 )
-                print(f"Added {len(chunk_contents)} chunks for document {doc_idx}.")
+                logger.debug(f"Added {len(chunk_contents)} chunks for document {doc_idx}.")
 
-        print("Documents added to vector database")
+        logger.info("Documents added to vector database")
 
     def search(self, query: str, n_results: int = 5) -> List[Document]:
         """

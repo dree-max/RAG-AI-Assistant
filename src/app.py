@@ -7,8 +7,10 @@ from vectordb import VectorDB
 from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PyPDFLoader, TextLoader
+from utils import setup_logger
+
+logger = setup_logger()
 
 # Load environment variables
 load_dotenv()
@@ -27,14 +29,21 @@ def load_documents() -> List[str]:
     data_path = os.path.join(os.path.dirname(__file__), DATA_DIR)
     documents = []
     for filename in os.listdir(data_path):
-        if filename.endswith(".pdf"):
-            file_path = os.path.join(data_path, filename)
-            loader = PyPDFLoader(file_path)
-            documents.extend(loader.load())
+        file_path = os.path.join(data_path, filename)
+        try:
+            if filename.endswith(".pdf"):
+                logger.info(f"Loading PDF: {filename}")
+                loader = PyPDFLoader(file_path)
+                documents.extend(loader.load())
+            elif filename.endswith((".txt", ".md")):
+                logger.info(f"Loading Text: {filename}")
+                loader = TextLoader(file_path, encoding='utf-8')
+                documents.extend(loader.load())
+        except Exception as e:
+            logger.error(f"Error loading file {filename}: {e}")
 
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    split_documents = text_splitter.split_documents(documents)
-    return split_documents
+    logger.info(f"Loaded {len(documents)} raw documents")
+    return documents
 
 
 class RAGAssistant:
@@ -57,21 +66,22 @@ class RAGAssistant:
         self.vector_db = VectorDB()
 
         # Create RAG prompt template
-        # TODO: Implement your RAG prompt template
-        # HINT: Use ChatPromptTemplate.from_template() with a template string
-        # HINT: Your template should include placeholders for {context} and {question}
-        # HINT: Design your prompt to effectively use retrieved context to answer questions
         self.prompt_template = ChatPromptTemplate.from_template(
-            """Answer the question based only on the following context:
+            """You are Ralph, an intelligent and helpful AI assistant efficiently answering questions using the provided context.
+
+Context:
 {context}
 
-Question: {question}"""
+Question: {question}
+
+If the answer is not in the context, please state that you don't have enough information based on the provided documents.
+"""
         )
 
         # Create the chain
         self.chain = self.prompt_template | self.llm | StrOutputParser()
 
-        print("RAG Assistant initialized successfully")
+        logger.info("RAG Assistant initialized successfully")
 
     def _initialize_llm(self):
         """
@@ -116,18 +126,18 @@ Question: {question}"""
         """
         self.vector_db.add_documents(documents)
 
-    def invoke(self, input: str, n_results: int = 3) -> str:
+    def invoke(self, input: str, n_results: int = 15) -> str:
         """
         Query the RAG assistant.
 
         Args:
             input: User's input
-            n_results: Number of relevant chunks to retrieve
-
-        Returns:
-            Dictionary containing the answer and retrieved context
+            n_results: Number of relevant chunks to retrieve (default: 15 for better context)
         """
         context_chunks = self.vector_db.search(input, n_results=n_results)
+        if not context_chunks:
+            return "I couldn't find any relevant information in the documents."
+            
         context = "\n\n".join([doc.page_content for doc in context_chunks])
         llm_answer = self.chain.invoke({"context": context, "question": input})
         return llm_answer
@@ -147,11 +157,14 @@ def main():
 
         assistant.add_documents(sample_docs)
 
-        question = "What is an AI agent?"
-        result = assistant.invoke(question)
-        print(f"Question: {question}")
-        print(f"Answer: {result}")
-        done = True
+        while True:
+            question = input("\n\nEnter your question (or 'exit' to quit): ")
+            if question.lower() in ['exit', 'quit', 'q']:
+                print("Goodbye!")
+                break
+            
+            result = assistant.invoke(question)
+            print(f"\nAnswer: {result}")
 
     except Exception as e:
         print(f"Error running RAG assistant: {e}")
